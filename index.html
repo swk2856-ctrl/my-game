@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>무한 줄넘기</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:100%;height:100%;overflow:hidden;background:#8fd3ff;
+  font-family:'Apple SD Gothic Neo','Malgun Gothic','Noto Sans KR',sans-serif;
+  user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent;touch-action:none}
+canvas{display:block;width:100%;height:100%}
+#hud{position:fixed;top:12px;left:0;right:0;display:flex;justify-content:center;gap:8px;pointer-events:none;z-index:5}
+.chip{background:rgba(255,255,255,.9);border-radius:14px;padding:6px 10px;text-align:center;box-shadow:0 3px 0 rgba(0,0,0,.12);min-width:62px}
+.chip.life .val{font-size:16px;line-height:27px;letter-spacing:-1px}
+.chip.shake{animation:shake .4s}
+@keyframes shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-6px)}40%{transform:translateX(6px)}60%{transform:translateX(-4px)}80%{transform:translateX(4px)}}
+.chip .label{font-size:12px;color:#777;font-weight:700}
+.chip .val{font-size:22px;font-weight:900;color:#333}
+.chip.combo .val{color:#ff5a5f}
+.overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(20,30,60,.42);z-index:10}
+.card{background:#fff;border-radius:24px;padding:26px 24px;width:min(88vw,360px);text-align:center;box-shadow:0 10px 30px rgba(0,0,0,.25)}
+.card h1{font-size:32px;font-weight:900;color:#ff5a5f;margin-bottom:6px}
+.card .sub{font-size:15px;color:#555;margin-bottom:18px}
+.card ul{list-style:none;text-align:left;background:#f4f8ff;border-radius:14px;padding:12px 14px;margin-bottom:20px}
+.card li{font-size:14px;color:#333;line-height:1.5;padding:3px 0}
+.stats{display:flex;justify-content:space-around;background:#f4f8ff;border-radius:14px;padding:14px 6px;margin:14px 0 20px}
+.stats .label{font-size:13px;color:#777;font-weight:700}
+.stats .val{font-size:28px;font-weight:900;color:#333}
+button{border:none;border-radius:16px;padding:14px 0;width:100%;font-size:20px;font-weight:900;color:#fff;cursor:pointer;
+  background:linear-gradient(90deg,#ff5fa2,#ff9a3c);box-shadow:0 5px 0 #d1477f;font-family:inherit}
+button:active{transform:translateY(3px);box-shadow:0 2px 0 #d1477f}
+.hint{font-size:12px;color:#999;margin-top:12px}
+.hidden{display:none!important}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div id="hud" class="hidden">
+  <div class="chip life" id="lifeChip"><div class="label">목숨</div><div class="val" id="hLife">❤️❤️❤️</div></div>
+  <div class="chip"><div class="label">개수</div><div class="val" id="hCount">0</div></div>
+  <div class="chip"><div class="label">점수</div><div class="val" id="hScore">0</div></div>
+  <div class="chip combo"><div class="label">콤보</div><div class="val"><span id="hCombo">0</span> <small id="hMult" style="font-size:15px">×1</small></div></div>
+</div>
+
+<div id="start" class="overlay">
+  <div class="card">
+    <h1>무한 줄넘기</h1>
+    <div class="sub">리듬에 맞춰 줄넘기를 가장 많이 넘는 게임</div>
+    <ul>
+      <li>👆 줄이 발밑에 올 때 <b>화면을 눌러</b> 점프!</li>
+      <li>⌨️ PC: <b>스페이스바</b> 또는 <b>마우스 클릭</b></li>
+      <li>✨ 줄이 지나갈 때 <b>가장 높이</b> 떠 있으면 <b>퍼펙트!</b></li>
+      <li>🔥 퍼펙트가 이어지면 콤보! 10콤보마다 <b>점수 배율 UP</b></li>
+      <li>👌 그냥 넘으면 개수는 오르지만 <b>콤보는 끊겨요</b></li>
+      <li>❤️ 목숨은 3개! 줄에 걸릴 때마다 하나씩 줄어요</li>
+      <li>⚡ 갈수록 줄이 빨라져요</li>
+    </ul>
+    <button id="btnStart">시작하기</button>
+  </div>
+</div>
+
+<div id="over" class="overlay hidden">
+  <div class="card">
+    <h1>목숨을 다 썼어요! 😵</h1>
+    <div class="stats">
+      <div><div class="label">넘은 개수</div><div class="val" id="oCount">0</div></div>
+      <div><div class="label">점수</div><div class="val" id="oScore">0</div></div>
+      <div><div class="label">최고 콤보</div><div class="val" id="oCombo">0</div></div>
+    </div>
+    <button id="btnRetry">다시 하기</button>
+    <div class="hint">PC에서는 스페이스바로도 다시 할 수 있어요</div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const cv = $('game'), ctx = cv.getContext('2d');
+let W = 0, H = 0;
+function resize(){
+  const d = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  cv.width = Math.round(W*d); cv.height = Math.round(H*d);
+  ctx.setTransform(d,0,0,d,0,0);
+}
+window.addEventListener('resize', resize); resize();
+
+// ===== 게임 설정 =====
+const START_PERIOD = 1.5;   // 줄이 한 바퀴 도는 시간(초) - 시작
+const MIN_PERIOD   = 0.45;  // 가장 빠를 때
+const SPEEDUP      = 0.965; // 한 개 넘을 때마다 빨라지는 정도
+const BASE_POINT   = 10;    // 한 개당 기본 점수
+const MAX_LIVES    = 3;     // 목숨 개수
+const PERFECT_WINDOW = 0.2; // 퍼펙트 판정 폭 (점프 꼭대기 기준 ±, 0~0.42). 클수록 퍼펙트가 쉬워짐
+const HIT_DUR      = 0.9;   // 줄에 걸린 뒤 다시 시작하기까지 쉬는 시간(초)
+const EMOJI_FONT = '"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif';
+
+const FACES = ['👦','👧','🧒','👩','👨','🧑','👵','👴','🧔'];
+const crowd = [];
+for (let i=0;i<80;i++) crowd.push({f:FACES[Math.floor(Math.random()*FACES.length)], ph:Math.random()*6.28, dx:(Math.random()-.5)*.35, clap:Math.random()<.3});
+
+let state = 'title'; // title | play | hit | fail | over
+let phase = 0, period = START_PERIOD, count = 0, score = 0, combo = 0, mult = 1, bestCombo = 0, lives = MAX_LIVES, hitT = 0;
+let jumping = false, jumpT = 0, jumpDur = .5, failT = 0, cheer = 0, overAt = 0, time = 0;
+const pops = [];
+
+function updateHUD(){
+  $('hLife').textContent = '❤️'.repeat(lives) + '🤍'.repeat(MAX_LIVES - lives);
+  $('hCount').textContent = count;
+  $('hScore').textContent = score;
+  $('hCombo').textContent = combo;
+  $('hMult').textContent = '×' + mult;
+}
+function resetRun(){
+  phase = 0; period = START_PERIOD; count = 0; score = 0; combo = 0; mult = 1; bestCombo = 0; lives = MAX_LIVES; hitT = 0;
+  jumping = false; jumpT = 0; failT = 0; cheer = 0; pops.length = 0; updateHUD();
+}
+function startGame(){
+  if (state === 'play' || state === 'hit' || state === 'fail') return;
+  resetRun(); state = 'play';
+  $('start').classList.add('hidden'); $('over').classList.add('hidden'); $('hud').classList.remove('hidden');
+  if (document.activeElement) document.activeElement.blur();
+}
+function jump(){
+  if (jumping) return;
+  jumping = true; jumpT = 0; jumpDur = Math.min(.5, period*.55);
+}
+function addPop(text, color, big){ pops.push({text, color, big, t:0}); }
+function speedUp(){
+  period = MIN_PERIOD + (START_PERIOD - MIN_PERIOD) * Math.pow(SPEEDUP, count);
+}
+// 퍼펙트: 개수 +1, 콤보 +1, 점수 = 기본점수 × 배율
+function perfect(){
+  count++; combo++;
+  mult = 1 + Math.floor(combo/10);
+  bestCombo = Math.max(bestCombo, combo);
+  const g = BASE_POINT * mult; score += g;
+  speedUp(); cheer = 1;
+  addPop('퍼펙트! +' + g, '#ffe14d', false);
+  if (combo % 10 === 0) addPop(combo + '콤보! 배율 ×' + mult, '#ff9a3c', true);
+  updateHUD();
+}
+// 그냥 넘음: 개수 +1, 콤보 끊김(배율 ×1), 기본점수만
+function good(){
+  const broke = combo > 0;
+  count++; combo = 0; mult = 1;
+  score += BASE_POINT;
+  speedUp(); cheer = .5;
+  addPop('좋아요 +' + BASE_POINT + (broke ? ' (콤보 끊김)' : ''), '#ffffff', false);
+  updateHUD();
+}
+// 줄에 걸림: 목숨 -1, 콤보 끊김. 목숨이 0이면 게임 끝
+function miss(){
+  lives--; combo = 0; mult = 1;
+  jumping = false; jumpT = 0; phase = .5;
+  updateHUD();
+  const chip = $('lifeChip'); chip.classList.remove('shake'); void chip.offsetWidth; chip.classList.add('shake');
+  if (lives <= 0){ state = 'fail'; failT = 0; }
+  else { state = 'hit'; hitT = 0; addPop('아야! 목숨 -1', '#ff6b6b', true); }
+}
+function showOver(){
+  state = 'over';
+  $('oCount').textContent = count; $('oScore').textContent = score; $('oCombo').textContent = bestCombo;
+  $('hud').classList.add('hidden'); $('over').classList.remove('hidden');
+  overAt = performance.now();
+}
+
+// ===== 조작 =====
+cv.addEventListener('pointerdown', e => { e.preventDefault(); if (state === 'play') jump(); });
+window.addEventListener('keydown', e => {
+  if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'Enter'){
+    e.preventDefault();
+    if (e.repeat) return;
+    if (state === 'title') startGame();
+    else if (state === 'play') jump();
+    else if (state === 'over' && performance.now() - overAt > 500) startGame();
+  }
+});
+$('btnStart').addEventListener('click', startGame);
+$('btnRetry').addEventListener('click', startGame);
+
+// ===== 업데이트 =====
+function update(dt){
+  time += dt;
+  cheer = Math.max(0, cheer - dt*1.8);
+  if (state === 'play' || state === 'title'){
+    const per = state === 'title' ? 1.1 : period;
+    const prev = phase;
+    phase += dt / per;
+    if (jumping){ jumpT += dt; if (jumpT >= jumpDur){ jumping = false; jumpT = 0; } }
+    if (state === 'title'){
+      if (!jumping && prev < .36 && phase >= .36){ jumping = true; jumpT = 0; jumpDur = .5; }
+    } else if (prev < .5 && phase >= .5){
+      // 줄이 발밑을 지나가는 순간 판정
+      // p = 점프 진행도(0=도약, 0.5=꼭대기, 1=착지)
+      const p = jumping ? jumpT / jumpDur : -1;
+      if (p > .08 && p < .92){
+        if (Math.abs(p - .5) <= PERFECT_WINDOW) perfect(); else good();
+      } else miss();
+    }
+    if (phase >= 1) phase -= 1;
+  } else if (state === 'hit'){
+    hitT += dt;
+    if (hitT >= HIT_DUR) state = 'play'; // 줄이 발밑에서 다시 돌기 시작
+  } else if (state === 'fail'){
+    failT += dt;
+    if (failT > 1) showOver();
+  }
+  for (let i=pops.length-1;i>=0;i--){ pops[i].t += dt; if (pops[i].t > 1) pops.splice(i,1); }
+}
+
+// ===== 그리기 =====
+function emoji(ch, x, y, size){
+  ctx.font = size + 'px ' + EMOJI_FONT;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(ch, x, y);
+}
+function cloud(x, y, r){
+  ctx.fillStyle = 'rgba(255,255,255,.92)';
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, 7); ctx.arc(x+r*1.1, y-r*.4, r*1.15, 0, 7);
+  ctx.arc(x+r*2.2, y, r*.9, 0, 7); ctx.rect(x, y, r*2.2, r*.9);
+  ctx.fill();
+}
+function drawBg(){
+  const fs = Math.max(20, Math.min(H*.05, W*.07));
+  const hz = H*.56;
+  const standTop = hz - fs*2.7;
+
+  // 하늘
+  let g = ctx.createLinearGradient(0,0,0,hz);
+  g.addColorStop(0,'#5fb8ff'); g.addColorStop(1,'#d3f0ff');
+  ctx.fillStyle = g; ctx.fillRect(0,0,W,hz+2);
+  // 해
+  const sr = Math.min(W,H)*.06;
+  ctx.fillStyle = 'rgba(255,240,150,.35)'; ctx.beginPath(); ctx.arc(W*.86,H*.2,sr*1.5,0,7); ctx.fill();
+  ctx.fillStyle = '#fff09a'; ctx.beginPath(); ctx.arc(W*.86,H*.2,sr,0,7); ctx.fill();
+  // 구름
+  for (let i=0;i<4;i++){
+    const x = (((i*.31 + time*.012*(1+i*.3)) % 1.3) - .15) * W;
+    cloud(x, H*(.17+i*.06), Math.min(W,H)*.035*(1+.25*(i%2)));
+  }
+  // 나무
+  ctx.fillStyle = '#58b860';
+  for (let x=-20, k=0; x<W+40; x+=44, k++){ ctx.beginPath(); ctx.arc(x, standTop - 4 + (k%3)*5, 30, 0, 7); ctx.fill(); }
+  ctx.fillStyle = '#479e4f';
+  for (let x=2, k=0; x<W+40; x+=44, k++){ ctx.beginPath(); ctx.arc(x, standTop + 6 + (k%2)*4, 24, 0, 7); ctx.fill(); }
+  // 응원 깃발
+  const by = standTop - 6;
+  ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(0,by); ctx.quadraticCurveTo(W/2, by+14, W, by); ctx.stroke();
+  const flagCols = ['#ff5fa2','#ffd23f','#36c9ff','#7bd96a','#b07cff'];
+  for (let i=0, x=10; x<W; x+=28, i++){
+    const t = x/W, yy = by + 14*2*t*(1-t)*1;
+    ctx.fillStyle = flagCols[i%flagCols.length];
+    ctx.beginPath(); ctx.moveTo(x-9,yy); ctx.lineTo(x+9,yy); ctx.lineTo(x,yy+15); ctx.closePath(); ctx.fill();
+  }
+  // 관중석 계단
+  ctx.fillStyle = '#8d9bb5'; ctx.fillRect(0, standTop, W, hz-standTop);
+  ctx.fillStyle = '#a9b6cc'; ctx.fillRect(0, standTop + fs*1.25, W, fs*.18);
+  ctx.fillStyle = '#c2cde0'; ctx.fillRect(0, hz - fs*.2, W, fs*.2);
+
+  // 관중
+  const fallen = (state === 'fail' || state === 'over');
+  const gap = fs*1.25;
+  const n = Math.ceil(W/gap) + 2;
+  const rowY = [standTop + fs*.75, standTop + fs*1.95];
+  for (let r=0;r<2;r++){
+    for (let i=0;i<n;i++){
+      const c = crowd[(i + r*37) % crowd.length];
+      const x = (i + (r ? .5 : 0)) * gap + c.dx*fs;
+      const bob = Math.abs(Math.sin(time*3 + c.ph))*fs*.06 + cheer*Math.abs(Math.sin(time*14 + c.ph))*fs*.35;
+      emoji(fallen ? '😱' : (state === 'hit' ? '😮' : c.f), x, rowY[r] - bob, fs);
+      if (c.clap && cheer > .3 && !fallen) emoji('👏', x + fs*.5, rowY[r] - bob - fs*.45, fs*.55);
+    }
+  }
+
+  // 잔디 + 운동장 흙
+  ctx.fillStyle = '#6cc46f'; ctx.fillRect(0, hz, W, H*.03);
+  g = ctx.createLinearGradient(0, hz+H*.03, 0, H);
+  g.addColorStop(0,'#e7c08a'); g.addColorStop(1,'#d9a86a');
+  ctx.fillStyle = g; ctx.fillRect(0, hz+H*.03, W, H);
+  // 트랙 라인
+  ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.lineWidth = 3;
+  for (let i=0;i<3;i++){
+    ctx.beginPath();
+    ctx.ellipse(W/2, H*1.18, W*(.75+i*.18), H*(.5+i*.06), 0, Math.PI, Math.PI*2);
+    ctx.stroke();
+  }
+}
+
+function ropeY(ph, top, bot){ const mid=(top+bot)/2, amp=(bot-top)/2; return mid - amp*Math.cos(ph*Math.PI*2); }
+function drawRope(L, R, ph, u, top, bot, alpha, width){
+  const ym = ropeY(ph, top, bot);
+  const c = (8*ym - L.y - R.y)/6;
+  const spread = 6*u*Math.abs(Math.cos(ph*Math.PI*2));
+  ctx.save(); ctx.globalAlpha = alpha;
+  const g = ctx.createLinearGradient(L.x-10*u, 0, R.x+10*u, 0);
+  g.addColorStop(0,'#ff5fa2'); g.addColorStop(.5,'#ffd23f'); g.addColorStop(1,'#36c9ff');
+  ctx.strokeStyle = g; ctx.lineWidth = width; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(L.x, L.y);
+  ctx.bezierCurveTo(L.x - spread, c, R.x + spread, c, R.x, R.y);
+  ctx.stroke(); ctx.restore();
+}
+function rotPt(x, y, px, py, a){
+  const s=Math.sin(a), c=Math.cos(a), dx=x-px, dy=y-py;
+  return {x: px + dx*c - dy*s, y: py + dx*s + dy*c};
+}
+function limb(pts, w, col){
+  ctx.strokeStyle = col; ctx.lineWidth = w; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+  for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0], pts[i][1]);
+  ctx.stroke();
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  drawBg();
+
+  const u = Math.min(H*.34, W*.6) / 100;
+  const cx = W/2, gY = H*.86;
+  const fallen = (state === 'fail' || state === 'over');
+  const p = jumping ? jumpT/jumpDur : 0;
+  const h = jumping ? Math.sin(Math.PI*p)*28*u : 0;
+  const fy = gY - h;
+  const hit = state === 'hit';
+  const ang = fallen ? Math.min(1, state === 'over' ? 1 : failT/.35) * 1.25
+            : (hit ? .45*Math.sin(Math.PI*Math.min(1, hitT/HIT_DUR)) : 0);
+  const ropeTop = gY - 100*u, ropeBot = gY + 1*u;
+
+  // 손 위치 (줄 돌리는 손목 움직임)
+  const wob = (fallen || hit) ? 0 : 1.5*u;
+  const a2 = phase*Math.PI*2;
+  let Lh = {x: cx - 22*u - Math.cos(a2)*wob, y: fy - 36*u + Math.sin(a2)*wob};
+  let Rh = {x: cx + 22*u + Math.cos(a2)*wob, y: fy - 36*u + Math.sin(a2)*wob};
+  if (fallen || hit){ Lh = rotPt(Lh.x, Lh.y, cx, gY, ang); Rh = rotPt(Rh.x, Rh.y, cx, gY, ang); }
+
+  const front = (ph) => { const q = ((ph % 1) + 1) % 1; return q <= .5; };
+  const ropes = [];
+  if (!fallen && !hit) ropes.push({ph: phase - .05, a: .15, w: 3*u}, {ph: phase - .025, a: .3, w: 3.5*u});
+  ropes.push({ph: phase, a: 1, w: 4*u});
+
+  // 뒤쪽 줄
+  for (const r of ropes) if (!front(r.ph)) drawRope(Lh, Rh, r.ph, u, ropeTop, ropeBot, r.a, r.w);
+
+  // 그림자
+  ctx.fillStyle = 'rgba(0,0,0,.18)';
+  ctx.beginPath(); ctx.ellipse(cx + (fallen ? 30*u : 0), gY + 2*u, (fallen ? 36 : 20)*u*(1 - h/(70*u)), 4*u, 0, 0, 7); ctx.fill();
+
+  // 캐릭터
+  ctx.save();
+  if (fallen || hit){ ctx.translate(cx, gY); ctx.rotate(ang); ctx.translate(-cx, -gY); }
+  if (hit && Math.floor(hitT*10) % 2) ctx.globalAlpha = .5; // 걸렸을 때 깜빡임
+  const skin = '#f6c79a';
+  const knee = jumping ? 5*u*Math.sin(Math.PI*p) : 0;
+  const tuck = jumping ? 4*u*Math.sin(Math.PI*p) : 0;
+  // 다리
+  limb([[cx-5*u, fy-27*u],[cx-6*u-knee, fy-14*u],[cx-5*u, fy-3*u+tuck*.3]], 5*u, skin);
+  limb([[cx+5*u, fy-27*u],[cx+6*u+knee, fy-14*u],[cx+5*u, fy-3*u+tuck*.3]], 5*u, skin);
+  // 운동화
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath(); ctx.ellipse(cx-7*u, fy-1.5*u, 5*u, 2.8*u, 0, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(cx+7*u, fy-1.5*u, 5*u, 2.8*u, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = '#ff5fa2';
+  ctx.fillRect(cx-12*u, fy-1.2*u, 10*u, 1.6*u); ctx.fillRect(cx+2*u, fy-1.2*u, 10*u, 1.6*u);
+  // 반바지
+  ctx.fillStyle = '#2f5bd3';
+  ctx.beginPath(); ctx.roundRect ? ctx.roundRect(cx-11*u, fy-35*u, 22*u, 11*u, 3*u) : ctx.rect(cx-11*u, fy-35*u, 22*u, 11*u); ctx.fill();
+  // 상의
+  ctx.fillStyle = '#ff5a5f';
+  ctx.beginPath(); ctx.roundRect ? ctx.roundRect(cx-11*u, fy-57*u, 22*u, 24*u, 5*u) : ctx.rect(cx-11*u, fy-57*u, 22*u, 24*u); ctx.fill();
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold ' + (10*u) + 'px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('1', cx, fy-45*u);
+  // 팔 (회전 전 좌표 기준)
+  const wobL = wob;
+  const lhx = cx - 22*u - Math.cos(a2)*wobL, rhx = cx + 22*u + Math.cos(a2)*wobL, hhy = fy - 36*u + Math.sin(a2)*wobL;
+  limb([[cx-10*u, fy-53*u],[cx-17*u, fy-44*u],[lhx, hhy]], 4.5*u, skin);
+  limb([[cx+10*u, fy-53*u],[cx+17*u, fy-44*u],[rhx, hhy]], 4.5*u, skin);
+  // 목 + 얼굴
+  ctx.fillStyle = skin; ctx.fillRect(cx-3*u, fy-60*u, 6*u, 5*u);
+  const face = fallen ? '😵' : (hit ? '😣' : (mult >= 3 ? '😆' : (jumping ? '😄' : '🙂')));
+  emoji(face, cx, fy-68*u, 24*u);
+  // 머리띠
+  ctx.fillStyle = '#ffd23f'; ctx.fillRect(cx-10.5*u, fy-77*u, 21*u, 3*u);
+  ctx.restore();
+
+  // 앞쪽 줄
+  for (const r of ropes) if (front(r.ph)) drawRope(Lh, Rh, r.ph, u, ropeTop, ropeBot, r.a, r.w);
+
+  // 손잡이
+  const handle = (pt, col) => {
+    ctx.save(); ctx.translate(pt.x, pt.y); ctx.rotate(ang);
+    ctx.fillStyle = col; ctx.beginPath();
+    ctx.roundRect ? ctx.roundRect(-2.5*u, -6*u, 5*u, 12*u, 2.5*u) : ctx.rect(-2.5*u, -6*u, 5*u, 12*u);
+    ctx.fill(); ctx.restore();
+  };
+  handle(Lh, '#ff5fa2'); handle(Rh, '#36c9ff');
+
+  // 점수 팝업
+  for (const pp of pops){
+    const size = Math.max(16, (pp.big ? 9 : 7)*u);
+    ctx.save(); ctx.globalAlpha = 1 - pp.t;
+    ctx.font = '900 ' + size + 'px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const y = gY - 112*u - pp.t*25*u - (pp.big ? 12*u : 0);
+    ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.35)'; ctx.strokeText(pp.text, cx, y);
+    ctx.fillStyle = pp.color; ctx.fillText(pp.text, cx, y);
+    ctx.restore();
+  }
+}
+
+let last = performance.now();
+function loop(now){
+  const dt = Math.min(.05, (now - last)/1000); last = now;
+  update(dt); draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
